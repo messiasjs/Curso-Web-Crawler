@@ -1,52 +1,80 @@
 import requests
 from bs4 import BeautifulSoup
+import pymongo
 
-noticias = []
-# URL dos sites
-urls = [
-    "https://www.gov.br/planalto/pt-br/acompanhe-o-planalto/noticias"
-]
+class Noticia:
+    def __init__(self, titulo, descricao, data, link, imagem):
+        self.titulo = titulo
+        self.descricao = descricao
+        self.data = data
+        self.link = link
+        self.imagem = imagem
 
-# Função para obter a imagem no link da noticia
-def obter_imagem(url):
-    response = requests.get(url)
-    soup = BeautifulSoup(response.text, "html.parser")
-    image = soup.find("div", {"id": "media"})
-    return image
+class WebScraper:
+    def __init__(self, urls):
+        self.urls = urls
+        self.noticias = []
 
-# Função para extrair informaçoes do site
-def extrair_noticias(url):
-    response = requests.get(url)
-    soup = BeautifulSoup(response.text, "html.parser")
-    
-    # Extrair informações específicas
-    for news in soup.find_all("div", class_="conteudo"):
+    def obter_imagem(self, url):
+        response = requests.get(url)
+        soup = BeautifulSoup(response.text, "html.parser")
+        image = soup.find("div", {"id": "media"})
+        return image.img['src'] if image else "Sem imagem"
+
+    def extrair_noticias(self, url):
+        response = requests.get(url)
+        soup = BeautifulSoup(response.text, "html.parser")
         
-        if news:
-            titulo = news.find('a')
-            descricao = news.find('span', class_='descricao')
-            data = news.find('span', class_='data')
-            link = titulo['href']
-            img = obter_imagem(link)
+        for news in soup.find_all("div", class_="conteudo"):
+            titulo = news.find('a').text
+            descricao = news.find('span', class_='descricao').text.strip().split('\n')[2]
+            data = news.find('span', class_='data').text.strip()
+            link = news.find('a')['href']
+            imagem = self.obter_imagem(link)
 
-        noticia = dict()
-        noticia['titulo'] = titulo.text
-        noticia['descricao'] = descricao.text.strip().split('\n')[2]
-        noticia['link'] = link
-        if img:
-            noticia['imagem'] =img.img['src']
-        else :
-             noticia['imagem'] = "Sem imagem"
-        noticia['data'] = data.text.strip()
-        noticias.append(noticia)
-    return noticias
+            noticia = Noticia(titulo, descricao, data, link, imagem)
+            self.noticias.append(noticia)
 
-# Iterar pelas URLs e exibir informações
-for url in urls:
-    for info in extrair_noticias(url):
-        print(f"1. Título: {info['titulo']}")
-        print(f"2. Descrição: {info['descricao']}")
-        print(f"3. Link: {info['link']}")
-        print(f"4. Imagem: {info['imagem']}")
-        print(f"5. Data: {info['data']}")
-        print("\n___________________________________\n\n")
+    def inserir_dado(self, dado):
+        try:
+            client = pymongo.MongoClient("mongodb://localhost:27017/")
+            db = client["news-crawler"]
+            collection = db["news"]
+            resultado = collection.insert_one(dado.__dict__)
+            client.close()
+            return f"Dado inserido com sucesso. ID: {resultado.inserted_id}"
+        except Exception as e:
+            return f"Erro ao inserir dado: {str(e)}"
+
+    def buscar_dado(self, criterio):
+        try:
+            client = pymongo.MongoClient("mongodb://localhost:27017/")
+            db = client["news-crawler"]
+            collection = db["news"]
+            resultado = collection.find_one(criterio)
+            client.close()
+            if resultado:
+                return f"Dado encontrado: {resultado}"
+            else:
+                return "Dado não encontrado."
+        except Exception as e:
+            return f"Erro ao buscar dado: {str(e)}"
+
+    def raspar_e_inserir(self):
+        for url in self.urls:
+            self.extrair_noticias(url)
+            for noticia in self.noticias:
+                mensagem_insercao = self.inserir_dado(noticia)
+                print(mensagem_insercao)
+
+if __name__ == "__main__":
+    urls = [
+        "https://www.gov.br/planalto/pt-br/acompanhe-o-planalto/noticias"
+    ]
+
+    scraper = WebScraper(urls)
+    scraper.raspar_e_inserir()
+
+    criterio_busca = {"titulo": "Presidente Lula conversa com o presidente do Egito"}  # Substitua pelo título desejado
+    mensagem_busca = scraper.buscar_dado(criterio_busca)
+    print(mensagem_busca)
